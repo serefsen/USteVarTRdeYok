@@ -817,26 +817,32 @@ def run(first):
 
         status, reason = decide_status(pid, vectors, gap, paid)
 
-        # İKİNCİ AŞAMA: Motor PASS → Gemini'ye sor, çıktıyı göster, kararı sen ver
+        # İKİNCİ AŞAMA: Motor PASS → Gemini'ye sor, çıktısını Notion kaydına ekle. Karar Şeref'in.
+        gemini_note = ""
         if status == "PASS":
             print("  [PASS → Gemini kontrol ediyor...]")
             try:
                 ss_res = second_stage_verdict(p, second_stage_gather(p)) or {}
             except Exception as e:
                 ss_res = {"var_mi": "HATA", "gerekce": str(e)}
-            print(f"  ── Gemini ──────────────────────────────────")
+            rakip_str = "; ".join(f"{r.get('ad','')} ({r.get('domain','')})"
+                                  for r in ss_res.get("rakipler", [])) or "-"
+            gemini_note = (f"GEMINI → VAR MI: {ss_res.get('var_mi','?')} | "
+                           f"Rakipler: {rakip_str} | "
+                           f"Kanıt: {str(ss_res.get('en_guclu_kanit','-'))[:400]} | "
+                           f"Gerekçe: {str(ss_res.get('gerekce','-'))[:400]}")
+            print("  ── Gemini ──────────────────────────────────")
             print(f"  VAR MI  : {ss_res.get('var_mi', '?')}")
             for r in ss_res.get("rakipler", []):
                 print(f"  Rakip   : {r.get('ad', '')} | {r.get('domain', '')}")
             print(f"  Kanıt   : {ss_res.get('en_guclu_kanit', '?')}")
             print(f"  Gerekçe : {ss_res.get('gerekce', '?')}")
-            print(f"  ─────────────────────────────────────────────")
-            status = "İNCELE"
-            reason = (f"Gemini: var_mi={ss_res.get('var_mi')} | "
-                      f"{ss_res.get('gerekce', '')[:300]}")
+            print("  ─────────────────────────────────────────────")
 
         counts[status] += 1
         full_reason = f"{reason} || duvar:{moat_reason} | gap:{gap_reason} | para:{paid_note}"
+        if gemini_note:
+            full_reason = f"{gemini_note} || {full_reason}"
         print(f"  -> {status}: {reason}")
         if status == "PASS":
             notion_write(db_id, pid, p, vectors, gap, paid, status, full_reason, evidence)
