@@ -1,0 +1,36 @@
+name: US→TR Fırsat Motoru (Günlük)
+
+on:
+  schedule:
+    - cron: '0 9 * * *'   # her gün 12:00 İstanbul (09:00 UTC)
+  workflow_dispatch:        # elle de tetiklenebilir
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install requests
+
+      - name: Motoru koştur
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PARENT: ${{ secrets.NOTION_PARENT }}
+          NOTION_DB: ${{ secrets.NOTION_DB }}
+        run: python us_tr_motor.py --first 40
+
+      - name: seen.json güncelle
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen.json
+          git diff --staged --quiet || git commit -m "seen.json güncelle [skip ci]"
+          git push
