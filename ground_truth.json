@@ -1,0 +1,25 @@
+{
+  "_NASIL": "human = doğru cevap: PASS (TR'de muadili yok, klonlanabilir) / DROP (canlı yerli muadil var). note'taki etiket: [V]=siteye girip doğruladım (olgu, güçlü) | [J]=benim yargım (gözden geçir) | [U]=duvar-yok temelli, spesifik rakip doğrulanmadı (en zayıf, motorla aynı mantık -> uyum çembersel). Katılmadığını DEĞİŞTİR.",
+  "items": [
+    {"pid": "honeybill",                                  "human": "DROP", "note": "[V] Favera (favera.com.tr) self-servis recurring billing + e-fatura, dogruladim"},
+    {"pid": "charla",                                     "human": "DROP", "note": "[V] Supsis (supsis.com) + Mavibot self-servis web/WhatsApp chatbot, dogruladim"},
+    {"pid": "unmixr-ai",                                  "human": "DROP", "note": "[V] Voiser (voiser.net) self-servis TTS/STT/dublaj, dogruladim"},
+    {"pid": "marketplace-wordhero",                       "human": "DROP", "note": "[V] InkfluenceAI yerli self-servis AI icerik (Webrazzi), dogruladim"},
+    {"pid": "tiny-talk",                                  "human": "DROP", "note": "[V] Mavibot self-servis WhatsApp chatbot (Charla ile ayni alan)"},
+    {"pid": "ai-smarttalk",                               "human": "DROP", "note": "[J] TR self-servis chatbot bol (Supsis/Mavibot) -> muadil var"},
+    {"pid": "xinterview",                                 "human": "DROP", "note": "[J] HRPeak/Vimesoft AI video mulakat var; self-servis vs kurumsal segment tartismali -> GOZDEN GECIR"},
+    {"pid": "personeoai",                                 "human": "DROP", "note": "[V] Enocta Personas birebir AI roleplay/soft-skill muadil; EVRE + Synaps AI da var -> DROP (devir #6 duzeltmesi; eski [J] PASS etiketi yanlisti)"},
+    {"pid": "wpautoblogcom",                              "human": "PASS", "note": "[J-dusuk] Webixmo ajans/hizmet modeli, saf self-servis SaaS degil -> bosluk olabilir, GOZDEN GECIR"},
+    {"pid": "spellar-ai",                                 "human": "PASS", "note": "[J-dusuk] net TR self-servis toplanti-notu muadili bulamadim; emin degilim, GOZDEN GECIR"},
+    {"pid": "hedy-ai",                                    "human": "DROP", "note": "[U-dusuk] toplanti/konusma asistani; Ing-rahat kitle, global arac dogrudan"},
+    {"pid": "motionvid",                                  "human": "DROP", "note": "[U] AI video; global arac TR'ye dogrudan"},
+    {"pid": "topical-map-ai",                             "human": "DROP", "note": "[U] SEO topical map; global arac dogrudan"},
+    {"pid": "airbrush-ai-image-generator",                "human": "DROP", "note": "[U] AI gorsel uretici; global dogrudan"},
+    {"pid": "writingmate",                                "human": "DROP", "note": "[U] AI yazi asistani; global dogrudan"},
+    {"pid": "webabilityio",                               "human": "DROP", "note": "[U] web erisilebilirlik; global dogrudan"},
+    {"pid": "release0",                                   "human": "DROP", "note": "[U] global dogrudan"},
+    {"pid": "ai-context-flow",                            "human": "DROP", "note": "[U] global dogrudan"},
+    {"pid": "flymsg",                                     "human": "DROP", "note": "[U] AI yazi/text expander; global dogrudan"},
+    {"pid": "sheetgpt-chatgpt-google-sheets-integration", "human": "DROP", "note": "[U] Sheets+ChatGPT entegrasyonu; global dogrudan"}
+  ]
+}

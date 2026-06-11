@@ -85,44 +85,60 @@ MOAT_DESC = (
 )
 
 # ---------------------------------------------------------------- helpers
-def llm_json(prompt, max_tokens=900):
-    """OpenRouter'a sor, SADECE JSON bekle, parse et. Hata olursa None döner."""
+LLM_ERR_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "llm_errors.jsonl")
+
+
+def _log_llm_error(stage, model, err, raw):
+    """Parse/ağ hatasında HAM çıktıyı sakla — 'Designer Logo Kit' vakası: hata sessiz kaybolmasın."""
     try:
-        r = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
-            json={"model": MODEL, "max_tokens": max_tokens, "temperature": 0,
-                  "messages": [{"role": "user", "content": prompt}]},
-            timeout=90,
-        )
-        r.raise_for_status()
-        txt = r.json()["choices"][0]["message"]["content"]
-        txt = re.sub(r"^```(json)?|```$", "", txt.strip(), flags=re.MULTILINE).strip()
-        m = re.search(r"\{.*\}", txt, re.DOTALL)
-        return json.loads(m.group(0) if m else txt)
-    except Exception as e:
-        print(f"   [llm hata] {e}")
-        return None
+        with open(LLM_ERR_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "stage": stage,
+                                "model": model, "error": str(err)[:300],
+                                "raw": (raw or "")[:2000]}, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _chat_raw(prompt, model=None, max_tokens=900, timeout=90):
+    r = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+        json={"model": model or MODEL, "max_tokens": max_tokens, "temperature": 0,
+              "messages": [{"role": "user", "content": prompt}]},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
+def _parse_json(txt, want_array=False):
+    txt = re.sub(r"^```(json)?|```$", "", txt.strip(), flags=re.MULTILINE).strip()
+    pat = r"[\[\{].*[\]\}]" if want_array else r"\{.*\}"
+    m = re.search(pat, txt, re.DOTALL)
+    return json.loads(m.group(0) if m else txt)
+
+
+def llm_json(prompt, max_tokens=900, model=None, want_array=False, stage="llm", timeout=90):
+    """OpenRouter'a sor, SADECE JSON bekle. Parse/ağ hatasında: ham çıktıyı llm_errors.jsonl'e
+    logla + sert 'SADECE JSON' uyarısıyla BİR kez daha dene. İki deneme de patlarsa None."""
+    raw = None
+    for attempt in (1, 2):
+        try:
+            q = prompt if attempt == 1 else (
+                prompt + "\n\nÖNEMLİ: Önceki yanıtın geçersiz JSON'du. SADECE geçerli ve "
+                         "EKSİKSİZ JSON döndür; açıklama, markdown, başka hiçbir şey yazma.")
+            raw = _chat_raw(q, model, max_tokens * attempt, timeout)  # 2. deneme: bütçe x2 (yarım-JSON/kesilme vakası)
+            return _parse_json(raw, want_array)
+        except Exception as e:
+            _log_llm_error(stage, model or MODEL, e, raw)
+            print(f"   [llm hata deneme {attempt}/2 | {stage}] {e} | ham[:100]={(raw or '')[:100]!r}")
+            raw = None
+    return None
 
 
 def llm_json_any(prompt, max_tokens=600):
     """llm_json gibi ama hem {..} hem [..] çıktısını yakalar. Sorgu listesi üretimi için."""
-    try:
-        r = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
-            json={"model": MODEL, "max_tokens": max_tokens, "temperature": 0,
-                  "messages": [{"role": "user", "content": prompt}]},
-            timeout=90,
-        )
-        r.raise_for_status()
-        txt = r.json()["choices"][0]["message"]["content"]
-        txt = re.sub(r"^```(json)?|```$", "", txt.strip(), flags=re.MULTILINE).strip()
-        m = re.search(r"[\[\{].*[\]\}]", txt, re.DOTALL)
-        return json.loads(m.group(0) if m else txt)
-    except Exception as e:
-        print(f"   [llm_json_any hata] {e}")
-        return None
+    return llm_json(prompt, max_tokens, want_array=True, stage="llm_any")
 
 
 def fetch_page(url, limit=2500):
@@ -137,25 +153,36 @@ def fetch_page(url, limit=2500):
         return ""
 
 
+def _ss_dom(url):
+    return re.sub(r"^https?://(www\.)?", "", (url or "").lower()).split("/")[0]
+
+
 def second_stage_gather(p):
-    """Geniş/çeşitli sorgular (pazar gerçek terimli) + Serper + sayfa metni → bol malzeme.
-    Motorun dar şablonunun kaçırdığı rakipleri yakalamak için (Enocta/EVRE/Synaps vakası)."""
+    """v2 — gemini_check laboratuvarında kanıtlanan tasarım (stage2_test sınavı: eski hat bilinen
+    rakiplerden 0 yakalıyordu; bu hat Supsis + EVRE'yi adıyla yakaladı):
+    1) ÇEŞİTLİLİK-KURALLI sorgular: 'yapay zeka' tek-kalıbı sınırlı, 'yerli/türk' kelimesi sınırlı
+       (SERP'i listicle'a büküyor), İngilizce pazar terimi zorunlu.
+    2) ADAY HASADI: snippet'lerde ADI GEÇEN olası yerli ürünler — listicle içindekiler DAHİL.
+    3) HEDEFLİ DOĞRULAMA: her adaya kendi adıyla arama + ana sayfa metni. Piyango -> sistematik.
+    Malzeme bütçesi 30k."""
     gen_prompt = f"""Bir ABD ürününün Türkiye'de yerli muadili var mı diye ARAYACAĞIM.
 Ürün: {p['name']} — {p.get('tagline','')}
 Açıklama: {p.get('desc','')[:800]}
 
-Türkçe web'de yerel rakipleri bulmak için 7 FARKLI arama sorgusu üret.
-KURALLAR:
-- Pazarın GERÇEKTE kullandığı terimi yaz; İngilizce alıntı tutuyorsa onu kullan (örn. "role play", "chatbot").
-- Hem dar (tam işlev) hem geniş (kategori) sorgular koy.
-- Tekrarlama, çeşitle. MARKA ADI KULLANMA.
-SADECE JSON dizi: ["sorgu1","sorgu2",...]"""
-    qs = llm_json_any(gen_prompt) or []
-    if not isinstance(qs, list):
-        qs = []
-    qs = [q for q in qs if isinstance(q, str) and q.strip()][:8]
+Türkçe web'de yerel rakipleri bulmak için 9 FARKLI arama sorgusu üret.
+KURALLAR (hepsi ZORUNLU):
+- "yapay zeka" ifadesi EN FAZLA 2 sorguda geçsin; kalanlar pazarın KENDİ jargonuyla
+  (kategorisi neyse onun terimi: "canlı destek", "chatbot", "video oluşturucu" gibi — ürüne göre bul).
+- "yerli", "türk", "türkiye", "türkçe" kelimeleri EN FAZLA 1 sorguda geçsin (arama zaten TR'ye kilitli).
+- 2 sorgu İngilizce pazar terimi içersin (TR pazarı İngilizce alıntı kullanır: "role play", "AI chatbot" gibi).
+- Hem dar (tam işlev) hem geniş (kategori/kullanım senaryosu). MARKA ADI KULLANMA. Tekrarlama.
+Ayrıca ürünün çekirdek işini pazarın diliyle 2-4 kelimeyle ver ("cekirdek").
+SADECE JSON: {{"cekirdek":"...","sorgular":["s1","s2",...]}}"""
+    j = llm_json(gen_prompt, 4000, stage="ss_query") or {}
+    qs = [q for q in (j.get("sorgular") or []) if isinstance(q, str) and q.strip()][:9]
+    core = (j.get("cekirdek") or "").strip() or (p.get("tagline") or p["name"])[:40]
     if not qs:
-        qs = [f"{p.get('tagline', p['name'])} Türkiye", f"yerli {p['name']} alternatif"]
+        qs = [f"{p.get('tagline', p['name'])} Türkiye", f"{p['name']} alternatif"]
 
     seen_urls, hits = set(), []
     for q in qs:
@@ -164,22 +191,63 @@ SADECE JSON dizi: ["sorgu1","sorgu2",...]"""
             if u and u not in seen_urls:
                 seen_urls.add(u); hits.append(h)
 
-    snip = "\n".join(f"- {h.get('title','')} | {h.get('snippet','')} [{h.get('url','')}]"
-                     for h in hits[:45])
-    pages, doms = [], set()
+    def _line(h, pre=""):
+        return f"- {pre}{h.get('title','')} | {h.get('snippet','')} [{h.get('url','')}]"
+
+    # 2) ADAY HASADI
+    cand_prompt = f"""ABD ürünü: {p['name']} — {p.get('tagline','')}
+Aşağıda Türkçe arama sonuçları (snippet) var. Bu metinlerde ADI GEÇEN ve Türk/yerli OLABİLECEK
+ürün/şirket adaylarını çıkar:
+- Liste/blog sayfalarının İÇİNDE anılan adlar da DAHİL (sayfanın kendisi değil, içindeki adlar).
+- Global devleri alma (Intercom, Zendesk, Canva, Synthesia gibi).
+- Emin olmadıkların da girsin; eleme sonra yapılacak.
+- domain'i snippet'ten biliyorsan yaz, bilmiyorsan boş bırak.
+SADECE JSON dizi (en fazla 8): [{{"ad":"","domain":""}}]
+
+SONUÇLAR:
+{chr(10).join(_line(h) for h in hits[:80])}"""
+    out = llm_json(cand_prompt, 4000, want_array=True, stage="ss_harvest")
+    cands = ([c for c in out if isinstance(c, dict) and (c.get("ad") or "").strip()][:8]
+             if isinstance(out, list) else [])
+    if cands:
+        print(f"   [2. aşama] aday hasadı: {', '.join(c['ad'] for c in cands)}")
+
+    # 3) HEDEFLİ DOĞRULAMA
+    vlines, pages, doms = [], [], set()
+    for c in cands:
+        ad = c["ad"].strip()
+        hs = tr_search(f"{ad} {core}", k=4)
+        vlines += [_line(h, f"[aday: {ad}] ") for h in hs]
+        dom = _ss_dom(c.get("domain") or "")
+        if not dom:  # hedefli aramadan adayın kendi sitesini yakala
+            key = re.sub(r"[^a-z0-9]", "", ad.lower())[:6]
+            for h in hs:
+                d = _ss_dom(h.get("url"))
+                if key and key in re.sub(r"[^a-z0-9]", "", d):
+                    dom = d
+                    break
+        if dom and dom not in doms:
+            doms.add(dom)
+            txt = fetch_page(f"https://{dom}", 2000)
+            if txt:
+                pages.append(f"### {dom} (aday: {ad})\n{txt}")
+
+    n_cand_pages = len(pages)  # genel sayfalar: aday sayfalarına EK ilk 4 yeni domain
     for h in hits:
-        u = h.get("url", "")
-        dom = re.sub(r"^https?://(www\.)?", "", u).split("/")[0].lower()
-        if not dom or dom in doms:
-            continue
-        doms.add(dom)
-        txt = fetch_page(u)
-        if txt:
-            pages.append(f"### {dom}\n{txt}")
-        if len(pages) >= 5:
+        if len(pages) >= n_cand_pages + 4:
             break
-    material = "## ARAMA SONUÇLARI\n" + snip + "\n\n## SAYFA METİNLERİ\n" + "\n\n".join(pages)
-    return material[:18000]
+        d = _ss_dom(h.get("url"))
+        if not d or d in doms:
+            continue
+        doms.add(d)
+        txt = fetch_page(h.get("url"), 2000)
+        if txt:
+            pages.append(f"### {d}\n{txt}")
+
+    material = ("## ARAMA SONUÇLARI\n" + "\n".join(_line(h) for h in hits[:70])
+                + "\n\n## ADAY DOĞRULAMA (hedefli arama)\n" + ("\n".join(vlines) or "-")
+                + "\n\n## SAYFA METİNLERİ\n" + "\n\n".join(pages))
+    return material[:30000]
 
 
 def second_stage_verdict(p, material):
@@ -190,27 +258,13 @@ Açıklama: {p.get('desc','')[:600]}
 Türkçe web'den toplanmış arama malzemesi aşağıda. SADECE bu malzemeye dayan, BİLGİNDEN UYDURMA.
 SORU: Türkiye'de bu ürününün ÇEKİRDEK işini yapan yerli/Türk oyuncu VAR mı?
 - Malzemede yerli ürün adı geçiyorsa → "VAR". ANCAK dolaylı/farklı-segment/farklı-kategori rakip için "BELİRSİZ" de, "VAR" deme.
+- Liste/karşılaştırma sayfasında adı geçen yerli ürün de geçerli kanıttır (domain'i malzemede yoksa domain alanına "belirsiz" yaz).
 - Malzeme yetersiz/ilgisizse → "BELİRSİZ".
 - Malzeme kapsamlı ama hiç yerli oyuncu yoksa → "YOK".
 - VAR diyebilmek için malzemeden doğrudan alıntı zorunlu; bellekten bilgi ekleme.
 SADECE JSON: {{"var_mi":"VAR|YOK|BELİRSİZ","rakipler":[{{"ad":"","domain":""}}],"en_guclu_kanit":"","gerekce":""}}
 MALZEME:\n{material}"""
-    try:
-        r = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
-            json={"model": SECOND_STAGE_MODEL, "max_tokens": 1500, "temperature": 0,
-                  "messages": [{"role": "user", "content": prompt}]},
-            timeout=180,
-        )
-        r.raise_for_status()
-        txt = r.json()["choices"][0]["message"]["content"]
-        txt = re.sub(r"^```(json)?|```$", "", txt.strip(), flags=re.MULTILINE).strip()
-        m = re.search(r"\{.*\}", txt, re.DOTALL)
-        return json.loads(m.group(0) if m else txt)
-    except Exception as e:
-        print(f"   [Gemini ikinci aşama hata] {e}")
-        return None
+    return llm_json(prompt, 4000, model=SECOND_STAGE_MODEL, stage="gemini2", timeout=180)
 
 
 def run_second_stage(p):
@@ -228,8 +282,13 @@ def run_second_stage(p):
         return "HATA", str(e)
 
 
+_SEARCH_FAILS = 0  # tr_search hata sayacı; gate_tr_gap 'arama çöktü' durumunda STRUCTURAL_GAP'i İNCELE'ye düşürür
+
+
 def tr_search(query, k=6):
-    """Türkçe web araması. Serper.dev (Google sonuçları). Sağlayıcı DEĞİŞTİRİLEBİLİR."""
+    """Türkçe web araması. Serper.dev (Google sonuçları). Sağlayıcı DEĞİŞTİRİLEBİLİR.
+    HATA ≠ BOŞ SONUÇ: hata sayaca işlenir; 'rakip bulunamadı' kanıtı o koşuda güvenilmez sayılır."""
+    global _SEARCH_FAILS
     try:
         r = requests.post(
             "https://google.serper.dev/search",
@@ -242,6 +301,7 @@ def tr_search(query, k=6):
         return [{"title": x.get("title", ""), "url": x.get("link", ""),
                  "snippet": x.get("snippet", "")} for x in res[:k]]
     except Exception as e:
+        _SEARCH_FAILS += 1
         print(f"   [arama hata] {e}")
         return []
 
@@ -356,30 +416,71 @@ def fetch_new_ph_products(days, first):
 
 
 # ---------------------------------------------------------------- GATE 1: duvar
+def _norm_text(s):
+    return re.sub(r"\s+", " ", (s or "").lower()).strip()
+
+
+def _citation_grounded(cit, blob):
+    """Alıntı ürün metninde gerçekten geçiyor mu? Önce birebir (normalize), olmazsa
+    kelime-örtüşmesi >= 0.8 (LLM alıntıyı hafifçe bozabilir; tamamen uydurmayı yine yakalar)."""
+    c = _norm_text(cit).strip('"\u201c\u201d\u2018\u2019\'')
+    if not c:
+        return False
+    if c in blob:
+        return True
+    toks = [t for t in re.findall(r"[a-z0-9çğıöşüâî]+", c) if len(t) > 3]
+    if not toks:
+        return False
+    return sum(1 for t in toks if t in blob) / len(toks) >= 0.8
+
+
 def gate_moat(p):
-    prompt = f"""Aşağıdaki ürünün TÜRKİYE pazarında YEREL DUVAR'ı olabilir mi?
+    """v2 — TANIK+YARGIÇ (gate_tr_gap ile aynı felsefe; devir #3, A varyantı: kanıt ürün metninden, arama yok).
+    Eski hali tek çıplak LLM kararıydı -> 34/40 blanket 'duvar yok' üretti. Şimdi:
+    LLM = tanık: her ADAY vektör için yapısal olgu + ürün metninden BİREBİR alıntı çıkarır, KARAR VERMEZ.
+    Python = yargıç: alıntı metinde doğrulanır; teknik vektör yapısal zorunlulukla, erisim kitle tipiyle geçer.
+    Dönen: (kabul edilen vektörler, vektör-bazlı denetim izi)."""
+    blob = _norm_text(f"{p['name']} {p.get('tagline','')} {p.get('desc','')}")
+    prompt = f"""Ürün metnine bak: aşağıdaki 8 yerel-duvar vektöründen hangileri ADAY olabilir?
 Yerel duvar = global İngilizce aracın TR'de tek başına kapatamayacağı yapısal engel.
 Vektörler: {MOAT_DESC}.
 
-İKİ TÜR DUVAR, ikisi de AYRI test:
-1) TEKNİK duvarlar (iys/kvkk/efatura/odeme/pazaryeri/dil/lojistik): SADECE ürün o Türk sistemine
-   TEKNİK olarak ENTEGRE olmak ZORUNDAYSA işaretle. Konuyla uzaktan ilgili olması YETMEZ
-   (ör. genel "muhasebe/CSV" -> efatura DEĞİL). "Daha iyi/Türkçe arayüz yaparız" duvar DEĞİL.
-2) erisim (GTM duvarı): SADECE hedef kitle İngilizce'ye UZAKSA (KOBİ, esnaf, tüketici, teknik-olmayan)
-   ve bu kitle İngilizce orijinali bulmaz/güvenmez/ödeyemezse işaretle. Kitle teknik/geliştirici/
-   global/İngilizce-rahat ise (dev araçları, ajanslar, pazarlamacılar, SaaS kurucuları) erisim YOKTUR.
-
-Şüphedeysen İŞARETLEME.
+TANIK MODUNDASIN — KARAR VERME, kanıt çıkar. Eleme Python'da yapılacak:
+- Aday OLABİLECEK her vektör için bir claim yaz. Emin olmasan da yaz; zayıf claim'i kural eler.
+- citation: ürün metninden BİREBİR kısa alıntı. UYDURMA — metinde geçmeyen alıntı claim'i otomatik geçersiz kılar.
+- structural_fact: tek cümle — bu vektörü duvar yapan YAPISAL durum.
+- yapisal_zorunluluk (teknik vektörler: iys/kvkk/efatura/odeme/pazaryeri/dil/lojistik):
+  true SADECE ürün o Türk sistemine teknik ENTEGRE olmak zorundaysa ya da (dil için) çekirdek işlev
+  dile/sese bağımlıysa. Konu benzerliği YETMEZ ("muhasebe/CSV" -> efatura DEĞİL). erisim için bu alanı false bırak.
+- kitle_tipi (sadece erisim): "ing_uzak" SADECE hedef kitle İngilizce'ye uzaksa (KOBİ, esnaf, tüketici,
+  teknik-olmayan). Geliştirici/pazarlamacı/ajans/SEO'cu/SaaS kurucusu = "ing_rahat".
+- Hiç aday yoksa claims boş liste.
 
 Ürün: {p['name']} — {p['tagline']}
 Açıklama: {p['desc']}
 
-SADECE JSON döndür:
-{{"vectors": ["..."], "reason": "tek cümle"}}
-Duvar yoksa vectors boş liste olsun. Sadece şu adlardan seç: {MOAT_VECTORS}"""
-    j = llm_json(prompt, 400) or {}
-    vecs = [v for v in (j.get("vectors") or []) if v in MOAT_VECTORS]
-    return vecs, (j.get("reason") or "")
+SADECE JSON:
+{{"claims":[{{"vector":"...","structural_fact":"...","citation":"...","yapisal_zorunluluk":false,"kitle_tipi":"ing_uzak|ing_rahat"}}]}}"""
+    j = llm_json(prompt, 900, stage="moat") or {}
+    accepted, audit = [], []
+    for c in (j.get("claims") or []):
+        v = c.get("vector")
+        if v not in MOAT_VECTORS or v in accepted:
+            continue
+        if not _citation_grounded(c.get("citation") or "", blob):
+            audit.append(f"{v}:RED[alıntı metinde yok]")
+            continue
+        fact = _norm_text(c.get("structural_fact"))[:90]
+        if v == "erisim":
+            ok = c.get("kitle_tipi") == "ing_uzak"
+            audit.append(f"{v}:{'KABUL' if ok else 'RED[kitle ing_rahat]'}({fact})")
+        else:
+            ok = _b(c.get("yapisal_zorunluluk"))
+            audit.append(f"{v}:{'KABUL' if ok else 'RED[yapısal zorunluluk yok]'}({fact})")
+        if ok:
+            accepted.append(v)
+    reason = " | ".join(audit) if audit else "aday vektör claim'i yok"
+    return accepted, reason
 
 
 # ---------------------------------------------------------------- GATE 2: tr_gap (rakip-yokluğu)
@@ -587,6 +688,8 @@ def log_verdict(product_id, first_pass, recheck_by, final_verdict, queries, hits
 
 
 def gate_tr_gap(p):
+    global _SEARCH_FAILS
+    fails_before = _SEARCH_FAILS
     name = p["name"]
     queries = tr_query_gen(p)
     hits, ev = [], []
@@ -639,6 +742,13 @@ def gate_tr_gap(p):
             reason = f"SEGMENT-RECHECK: {sreason}"
         else:
             reason = f"SEGMENT-RECHECK: self-servis/KOBİ muadili doğrulanamadı -> insan | {reason}"
+
+    # GÜVENLİK KİLİDİ: bu ürünün değerlendirmesinde arama hatası olduysa "rakip yok" kanıtı GÜVENİLMEZ.
+    # (Serper 403 vakası: kör arama -> boş SERP -> STRUCTURAL_GAP -> yanlış PASS. Kanıt yokluğu ≠ yokluğun kanıtı.)
+    nfails = _SEARCH_FAILS - fails_before
+    if nfails > 0 and verdict == "STRUCTURAL_GAP":
+        verdict = "INCOMPLETE"
+        reason = f"ARAMA HATASI ({nfails} sorgu çöktü) — 'yerli oyuncu yok' doğrulanamaz -> insan | {reason}"
 
     log_verdict(p.get("pid") or name, first_pass, recheck_by, verdict, queries, hits)
     return verdict, reason, ev
@@ -798,10 +908,10 @@ def run(first):
         processed += 1
         print(f"\n• {p['name']}  ({pid})")
 
-        # GATE 1 — duvar ön-elemesi (ucuz)
+        # GATE 1 — duvar ön-elemesi (tanık+yargıç; denetim izi moat_reason'da)
         vectors, moat_reason = gate_moat(p)
         if not vectors:
-            status, reason = "DROP", "yerel duvar yok -> global TR'ye doğrudan hizmet veriyor"
+            status, reason = "DROP", f"yerel duvar yok | denetim: {moat_reason}"
             counts[status] += 1
             print(f"  -> {status}: {reason}")
             continue
@@ -844,7 +954,7 @@ def run(first):
         if gemini_note:
             full_reason = f"{gemini_note} || {full_reason}"
         print(f"  -> {status}: {reason}")
-        if status == "PASS":
+        if status in ("PASS", "İNCELE"):  # İNCELE artık görünür: 'emin değilim, bak' dediği ürünler logda kaybolmasın
             notion_write(db_id, pid, p, vectors, gap, paid, status, full_reason, evidence)
 
     save_seen(seen)
