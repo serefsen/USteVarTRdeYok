@@ -485,17 +485,76 @@ SADECE JSON:
 
 # ---------------------------------------------------------------- GATE 2: tr_gap (rakip-yokluğu)
 def tr_query_gen(p):
-    """LLM = TANIK: ürünün çekirdek işlevini kısa Türkçe isim öbeğine çevirir (çıkarım). Sorgular SABİT
-    şablondan üretilir — deterministik retrieval (panel C). Marka adı yasak (isim çakışması)."""
-    prompt = f"""Bu ürünün çekirdek işlevini 2-4 kelimelik TEK bir Türkçe isim öbeğine çevir.
-MARKA ADI KULLANMA. Fiil değil, kısa isim öbeği.
-Örnek: "yapay zeka toplantı notu", "abonelik faturalama", "whatsapp chatbot", "yapay zeka içerik üretme".
-Ürün: {p['name']} — {p['tagline']}
-Açıklama: {p['desc']}
-SADECE JSON: {{"islev": "..."}}"""
-    j = llm_json(prompt, 80) or {}
-    islev = (j.get("islev") or "").strip().strip('"') or (p.get("tagline") or p["name"])
-    return [f"{islev} yazılımı Türkiye", f"yerli {islev} aracı", f"{islev} fiyatlandırma KOBİ"]
+    """LLM = TANIK: ÇEŞİTLİ Türkçe sorgu üretir (Rota A — eski 3 sabit dar şablon recall'ı öldürüyordu:
+    'rol yapma' kurup pazarın 'role play'ini kaçırıyordu). Kurallar: 'yapay zeka' tek-kalıbı sınırlı,
+    'yerli/türk' sınırlı (SERP'i listicle'a büküyor), İngilizce pazar terimi zorunlu. Marka adı yasak.
+    Dönen: (sorgular, çekirdek_terim)."""
+    prompt = f"""'{p['name']}' ({p.get('tagline','')}) ürününün Türkiye'de yerli muadilini ARAYACAĞIM.
+Açıklama: {p.get('desc','')[:600]}
+
+Yerel rakipleri bulmak için 7 FARKLI Türkçe arama sorgusu üret. KURALLAR (hepsi ZORUNLU):
+- "yapay zeka" ifadesi EN FAZLA 2 sorguda; kalanlar pazarın KENDİ jargonuyla (kategori terimi:
+  "canlı destek", "abonelik faturalama", "video oluşturucu" gibi — ürüne göre sen bul).
+- "yerli/türk/türkiye/türkçe" EN FAZLA 1 sorguda (arama zaten TR'ye kilitli).
+- 2 sorgu İngilizce pazar terimi içersin (TR pazarı alıntı kullanır: "role play", "AI chatbot" gibi).
+- Hem dar (tam işlev) hem geniş (kategori/senaryo). MARKA ADI YASAK. Tekrarlama.
+Ürünün çekirdek işini pazarın diliyle 2-4 kelimeyle de ver ("cekirdek").
+SADECE JSON: {{"cekirdek":"...","sorgular":["s1","s2",...]}}"""
+    j = llm_json(prompt, 1500, stage="gap_query") or {}
+    qs = [q for q in (j.get("sorgular") or []) if isinstance(q, str) and q.strip()][:7]
+    core = (j.get("cekirdek") or "").strip() or (p.get("tagline") or p["name"])[:40]
+    if not qs:
+        qs = [f"{p.get('tagline', p['name'])} Türkiye", f"{p['name']} alternatif"]
+    return qs, core
+
+
+def harvest_tr_candidates(name, tagline, hits):
+    """Snippet'lerde ADI GEÇEN olası yerli ürün adaylarını çıkar (listicle içindekiler DAHİL).
+    Recall'ın kilidi: 'en iyi 10 X' sayfası rakibin ADINI taşır ama URL'ini taşımaz -> hedefli
+    arama için isim lazım; ad olmadan domain SERP'e hiç girmez, grounding tutmaz."""
+    snip = "\n".join(f"- {h.get('title','')} | {h.get('snippet','')} [{h.get('url','')}]"
+                     for h in hits[:60]) or "(sonuç yok)"
+    prompt = f"""ABD ürünü: {name} — {tagline}
+Aşağıdaki Türkçe arama sonuçlarında ADI GEÇEN, Türk/yerli OLABİLECEK ürün/şirket adaylarını çıkar:
+- Liste/blog sayfalarının İÇİNDE anılan ürün adları DAHİL (sayfanın kendisi değil, içindeki adlar).
+- Global devleri ALMA (Intercom, Zendesk, Canva, Synthesia...).
+- Emin olmadıkların da girsin; eleme sonra yapılacak.
+SADECE JSON dizi (en fazla 8 isim): ["ad1","ad2",...]"""
+    out = llm_json(prompt, 800, want_array=True, stage="gap_harvest")
+    return [s.strip() for s in out if isinstance(s, str) and s.strip()][:8] if isinstance(out, list) else []
+
+
+def tr_gap_gather(p):
+    """İLK-GEÇİŞ RECALL TOPLAMA (Rota A): çeşitli sorgu -> aday hasadı -> hedefli doğrulama.
+    Kritik: hedefli aramalar adayın KENDİ domain'ini SERP'e SOKAR -> rule_engine_gap'in
+    'pl[dom] in serp_urls' grounding'i artık tutar. (Eski 3 dar sorgu Supsis/Enocta domain'ini
+    SERP'e hiç sokamıyordu -> grounded değil -> reddediliyordu -> kırılgan STRUCTURAL_GAP -> yanlış PASS.)
+    Dönen: (hits, ev, core, queries) — hedefli hits ÖNCE (extract penceresine girsinler)."""
+    queries, core = tr_query_gen(p)
+    seen, broad, targeted, ev = set(), [], [], []
+
+    def _ev(q, res):
+        ev.append({"query": q, "searched_at": datetime.now(timezone.utc).isoformat(),
+                   "results": [{"url": x["url"], "title": x["title"]} for x in res]})
+
+    for q in queries:
+        res = tr_search(q, 6)
+        _ev(q, res)
+        for x in res:
+            if x.get("url") and x["url"] not in seen:
+                seen.add(x["url"]); broad.append(x)
+        time.sleep(0.3)
+
+    for c in harvest_tr_candidates(p["name"], p.get("tagline", ""), broad):
+        dq = f"{c} {core}"
+        res = tr_search(dq, 4)
+        _ev(dq, res)
+        for x in res:
+            if x.get("url") and x["url"] not in seen:
+                seen.add(x["url"]); targeted.append(x)
+        time.sleep(0.3)
+
+    return targeted + broad, ev, core, queries
 
 
 def is_local_tr(dom, hits):
@@ -553,7 +612,7 @@ def _b(x):
 def extract_tr_players(name, tagline, hits):
     """LLM = TANIK (yargıç DEĞİL). SERP'ten TR oyuncularını ve YAPILANDIRILMIŞ KANITLARINI çıkarır.
     Karar/etiket vermez. Her oyuncu: url + gözlenen olgular."""
-    serp = "\n".join(f"- {h['title']} | {h['url']} | {h['snippet'][:160]}" for h in hits[:14]) or "(sonuç yok)"
+    serp = "\n".join(f"- {h['title']} | {h['url']} | {h['snippet'][:160]}" for h in hits[:24]) or "(sonuç yok)"
     prompt = f"""Aşağıdaki ARAMA SONUÇLARINDAN, '{name}' ({tagline}) ürününün ÇEKİRDEK işini yapan TÜRK/yerli oyuncuları çıkar.
 KARAR VERME, SINIFLANDIRMA YAPMA — yalnız her oyuncu için GÖZLENEN OLGULARI doldur.
 Bir oyuncuyu YALNIZ url'si sonuçlarda BİREBİR geçiyorsa ekle; geçmiyorsa UYDURMA. Oyuncu yoksa boş liste.
@@ -568,7 +627,7 @@ Her oyuncu için alanlar:
 ARAMA SONUÇLARI:
 {serp}
 SADECE JSON: {{"players":[{{"name":"","url":"","does_core_work":true,"has_public_pricing":"unknown","has_self_serve_signup":"unknown","target_buyer":"unknown"}}]}}"""
-    j = llm_json(prompt, 800) or {}
+    j = llm_json(prompt, 1500, stage="extract") or {}
     return j.get("players") or []
 
 
@@ -691,14 +750,8 @@ def gate_tr_gap(p):
     global _SEARCH_FAILS
     fails_before = _SEARCH_FAILS
     name = p["name"]
-    queries = tr_query_gen(p)
-    hits, ev = [], []
-    for q in queries:
-        res = tr_search(q, 5)
-        ev.append({"query": q, "searched_at": datetime.now(timezone.utc).isoformat(),
-                   "results": [{"url": x["url"], "title": x["title"]} for x in res]})
-        hits += res
-        time.sleep(0.4)
+    # Rota A: çeşitli sorgu + aday hasadı + hedefli doğrulama -> hedefli aramalar aday domain'ini SERP'e sokar
+    hits, ev, core, queries = tr_gap_gather(p)
 
     # İLK GEÇİŞ — LLM KANIT çıkarır (tanık), kanonik profil uygulanır, PYTHON kural motoru KARAR verir.
     players = canon_profiles(extract_tr_players(name, p["tagline"], hits), hits)
@@ -788,7 +841,9 @@ def decide_status(pid, vectors, gap, paid):
         return "İNCELE", "boşluk var ama ödeme sinyali zayıf/yok"
     if gap == "SEGMENT_GAP":
         return "İNCELE", "TR'de oyuncu var, segment farkı kanıtlanamadı -> insan kontrolü (SEGMENT_UNVERIFIED)"
-    return "PASS", "TR'de çekirdek işi yapan müstakil yerli oyuncu yok"
+    # STRUCTURAL_GAP: motor rakip BULAMADI. Bu 'TR'de yok' DEĞİL, 'ben bulamadım' demek (devir #3) ->
+    # motor asla tek başına PASS demez. İNCELE + Gemini derin araması + Şeref kararı. Yanlış-PASS sınıfı ölür.
+    return "İNCELE", "motor TR'de müstakil yerli rakip BULAMADI (ipucu, kesin değil) -> Gemini + insan kontrolü"
 
 
 # ---------------------------------------------------------------- Notion
@@ -836,12 +891,32 @@ def ensure_notion_db():
         sys.exit(f"Notion DB oluşturulamadı: {e}")
 
 
-def notion_write(db_id, pid, p, vectors, gap, paid, status, reason, evidence):
-    ev_txt = ""
-    for e in evidence:
-        ev_txt += f"[{e['query']}] {e['searched_at']}\n"
-        for r in e["results"][:4]:
-            ev_txt += f"  - {r['url']}\n"
+_DOM_RE = re.compile(r"\b[a-z0-9][a-z0-9-]*\.(?:com\.tr|com|net\.tr|net|org|io|ai|co|app|dev)\b")
+
+
+def _domains_in(text):
+    """Bir gerekçe metninde adı geçen alan adlarını çıkar (tanığın işaret ettiği gerçek rakipler).
+    Ham SERP URL'lerini DEĞİL — sadece kararda anılan domain'leri. TUSAŞ tipi çöp buraya giremez."""
+    seen, out = set(), []
+    for d in _DOM_RE.findall((text or "").lower()):
+        if d not in seen:
+            seen.add(d); out.append(d)
+    return out
+
+
+def notion_write(db_id, pid, p, vectors, gap, paid, status, gerekce, competitors):
+    """v2 — TEMİZ ÇIKTI. Gerekçe = tek-cümle insan kararı (pipe-blob YOK). Kanıt = ÇIKARILAN rakipler
+    (ad — domain), ham SERP dökümü değil -> alakasız sonuç (Chaos Control->TUSAŞ) artık giremez.
+    Ham arama izi verdict_log.jsonl + konsolda kalır (debug orada)."""
+    seen, kanit_lines = set(), []
+    for c in competitors:
+        ad, dom = (c.get("ad") or "").strip(), (c.get("domain") or "").strip()
+        key = (dom or ad).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        kanit_lines.append(f"• {ad or '(ad yok)'}{(' — ' + dom) if dom else ''}")
+    kanit = "\n".join(kanit_lines) or "— rakip çıkarılmadı —"
     props = {
         "Ürün":    {"title": [{"text": {"content": p["name"][:200] or "?"}}]},
         "Durum":   {"select": {"name": status}},
@@ -849,8 +924,8 @@ def notion_write(db_id, pid, p, vectors, gap, paid, status, reason, evidence):
         "Duvar":   {"multi_select": [{"name": v} for v in vectors]},
         "tr_gap":  {"select": {"name": gap or "-"}},
         "Ücretli": {"checkbox": bool(paid)},
-        "Gerekçe": {"rich_text": [{"text": {"content": (reason or "")[:1900]}}]},
-        "Kanıt":   {"rich_text": [{"text": {"content": ev_txt[:1900]}}]},
+        "Gerekçe": {"rich_text": [{"text": {"content": (gerekce or "")[:1900]}}]},
+        "Kanıt":   {"rich_text": [{"text": {"content": kanit[:1900]}}]},
     }
     if p.get("site"):
         props["URL"] = {"url": p["site"]}
@@ -927,20 +1002,15 @@ def run(first):
 
         status, reason = decide_status(pid, vectors, gap, paid)
 
-        # İKİNCİ AŞAMA: Motor PASS → Gemini'ye sor, çıktısını Notion kaydına ekle. Karar Şeref'in.
-        gemini_note = ""
-        if status == "PASS":
-            print("  [PASS → Gemini kontrol ediyor...]")
+        # İKİNCİ AŞAMA: Motor rakip BULAMADIYSA (STRUCTURAL_GAP, artık İNCELE) Gemini DERİN arar ve NOT düşer.
+        # Motor asla tek başına PASS demez (devir #3). Gemini verdikti DEĞİŞTİRMEZ — Şeref okur, karar verir.
+        ss_res = {}
+        if gap == "STRUCTURAL_GAP":
+            print("  [motor bulamadı → Gemini derin kontrol...]")
             try:
                 ss_res = second_stage_verdict(p, second_stage_gather(p)) or {}
             except Exception as e:
                 ss_res = {"var_mi": "HATA", "gerekce": str(e)}
-            rakip_str = "; ".join(f"{r.get('ad','')} ({r.get('domain','')})"
-                                  for r in ss_res.get("rakipler", [])) or "-"
-            gemini_note = (f"GEMINI → VAR MI: {ss_res.get('var_mi','?')} | "
-                           f"Rakipler: {rakip_str} | "
-                           f"Kanıt: {str(ss_res.get('en_guclu_kanit','-'))[:400]} | "
-                           f"Gerekçe: {str(ss_res.get('gerekce','-'))[:400]}")
             print("  ── Gemini ──────────────────────────────────")
             print(f"  VAR MI  : {ss_res.get('var_mi', '?')}")
             for r in ss_res.get("rakipler", []):
@@ -950,12 +1020,20 @@ def run(first):
             print("  ─────────────────────────────────────────────")
 
         counts[status] += 1
-        full_reason = f"{reason} || duvar:{moat_reason} | gap:{gap_reason} | para:{paid_note}"
-        if gemini_note:
-            full_reason = f"{gemini_note} || {full_reason}"
         print(f"  -> {status}: {reason}")
-        if status in ("PASS", "İNCELE"):  # İNCELE artık görünür: 'emin değilim, bak' dediği ürünler logda kaybolmasın
-            notion_write(db_id, pid, p, vectors, gap, paid, status, full_reason, evidence)
+
+        # TEMİZ Notion çıktısı (sadece İNCELE yazılır; motor PASS üretmez). Gerekçe = insan kararı;
+        # Kanıt = çıkarılan rakipler (ham SERP değil -> TUSAŞ tipi çöp giremez). Ham audit konsol+verdict_log'da.
+        if status == "İNCELE":
+            gerekce = f"İNCELE — duvar: {', '.join(vectors)}. {gap_reason}"
+            if ss_res:
+                gerekce += (f"\nGEMINI → {ss_res.get('var_mi', '?')}: "
+                            f"{str(ss_res.get('gerekce', '') or ss_res.get('en_guclu_kanit', ''))[:600]}")
+            competitors = [{"ad": r.get("ad", ""), "domain": r.get("domain", "")}
+                           for r in ss_res.get("rakipler", [])]
+            for d in _domains_in(gap_reason):  # ilk-aşama tanığın işaret ettiği domain'ler
+                competitors.append({"ad": "", "domain": d})
+            notion_write(db_id, pid, p, vectors, gap, paid, status, gerekce, competitors)
 
     save_seen(seen)
     print(f"\n=== ÖZET: işlenen {processed} | PASS {counts['PASS']} | "
