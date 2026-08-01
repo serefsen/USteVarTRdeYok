@@ -519,7 +519,9 @@ Aşağıdaki Türkçe arama sonuçlarında ADI GEÇEN, Türk/yerli OLABİLECEK �
 - Liste/blog sayfalarının İÇİNDE anılan ürün adları DAHİL (sayfanın kendisi değil, içindeki adlar).
 - Global devleri ALMA (Intercom, Zendesk, Canva, Synthesia...).
 - Emin olmadıkların da girsin; eleme sonra yapılacak.
-SADECE JSON dizi (en fazla 8 isim): ["ad1","ad2",...]"""
+Önsöz/açıklama YAZMA, analiz anlatma. İlk karakter '[' olsun.
+SADECE JSON dizi (en fazla 8 isim): ["ad1","ad2",...]
+Sonuç boşsa boş dizi döndür: []"""
     out = llm_json(prompt, 800, want_array=True, stage="gap_harvest")
     return [s.strip() for s in out if isinstance(s, str) and s.strip()][:8] if isinstance(out, list) else []
 
@@ -966,15 +968,23 @@ def run(first):
 
     # AppSumo'dan kategori kategori topla, slug ile tekille
     pool, pool_ids = [], set()
+    print("AppSumo havuzu çekiliyor (~1-2 dk, kesme)...")
     for q in APPSUMO_QUERIES:
+        print(f"  çekiliyor: {q} ...", flush=True)
         for d in fetch_appsumo(q):
             if d["pid"] and d["pid"] not in pool_ids:
                 pool_ids.add(d["pid"]); pool.append(d)
         time.sleep(0.5)
+    # --- EK KAYNAK: DealMirror (PG oldu, SM Cloudflare-bloklu) ---
+    from source_dealmirror import fetch_dealmirror
+    print("DealMirror havuzu cekiliyor...")
+    for d in fetch_dealmirror(max_products=80, skip_pids=seen):
+        if d.get("pid") and d["pid"] not in pool_ids:
+            pool_ids.add(d["pid"]); pool.append(d)
     products = [p for p in pool if p["pid"] not in seen][:first]
     print(f"AppSumo: {len(pool)} tekil deal bulundu, {len(products)} yeni işlenecek.")
 
-    counts = {"PASS": 0, "İNCELE": 0, "DROP": 0}
+    counts = {"PASS": 0, "BELIRSIZ": 0, "DROP": 0}
     processed = 0
 
     for p in products:
@@ -1000,47 +1010,52 @@ def run(first):
         paid = True
         paid_note = f"AppSumo Lifetime Deal (kalan kod: {p.get('codes')})"
 
-        status, reason = decide_status(pid, vectors, gap, paid)
-
-        # İKİNCİ AŞAMA: Motor rakip BULAMADIYSA (STRUCTURAL_GAP, artık İNCELE) Gemini DERİN arar ve NOT düşer.
-        # Motor asla tek başına PASS demez (devir #3). Gemini verdikti DEĞİŞTİRMEZ — Şeref okur, karar verir.
+        # YENI MIMARI: Gemini = FILTRE. VAR->DROP / YOK->PASS / BELIRSIZ->etiket. Notion'a PASS+BELIRSIZ.
         ss_res = {}
-        if gap == "STRUCTURAL_GAP":
-            print("  [motor bulamadı → Gemini derin kontrol...]")
+        if gap == "NO_GAP":
+            status, reason = "DROP", "TR'de ayni isi ayni segmente yapan mustakil yerli oyuncu var (dogrulandi)"
+        elif gap == "STRUCTURAL_GAP":
+            print("  [motor bulamadi -> Gemini derin kontrol...]")
             try:
                 ss_res = second_stage_verdict(p, second_stage_gather(p)) or {}
             except Exception as e:
                 ss_res = {"var_mi": "HATA", "gerekce": str(e)}
-            print("  ── Gemini ──────────────────────────────────")
-            print(f"  VAR MI  : {ss_res.get('var_mi', '?')}")
+            var_mi = str(ss_res.get("var_mi", "BELIRSIZ")).upper().strip()
+            print("  -- Gemini --------------------------------")
+            print(f"  VAR MI  : {var_mi}")
             for r in ss_res.get("rakipler", []):
                 print(f"  Rakip   : {r.get('ad', '')} | {r.get('domain', '')}")
-            print(f"  Kanıt   : {ss_res.get('en_guclu_kanit', '?')}")
-            print(f"  Gerekçe : {ss_res.get('gerekce', '?')}")
-            print("  ─────────────────────────────────────────────")
+            print(f"  Kanit   : {ss_res.get('en_guclu_kanit', '?')}")
+            print(f"  Gerekce : {ss_res.get('gerekce', '?')}")
+            print("  ------------------------------------------")
+            if var_mi == "VAR":
+                status, reason = "DROP", "Gemini TR muadili DOGRULADI -> klonlanmaz"
+            elif var_mi == "YOK":
+                status, reason = "PASS", "Gemini derin aramada TR muadili BULAMADI -> aday (klonlamadan once dogrula)"
+            else:
+                status, reason = "BELIRSIZ", f"Gemini netlestiremedi ({var_mi}) -> insan"
+        else:
+            status, reason = "BELIRSIZ", f"TR oyuncu var/islev belirsiz -> insan | {gap_reason}"
 
-        counts[status] += 1
+        counts[status] = counts.get(status, 0) + 1
         print(f"  -> {status}: {reason}")
 
-        # TEMİZ Notion çıktısı (sadece İNCELE yazılır; motor PASS üretmez). Gerekçe = insan kararı;
-        # Kanıt = çıkarılan rakipler (ham SERP değil -> TUSAŞ tipi çöp giremez). Ham audit konsol+verdict_log'da.
-        if status == "İNCELE":
-            gerekce = f"İNCELE — duvar: {', '.join(vectors)}. {gap_reason}"
+        if status in ("PASS", "BELIRSIZ"):
+            gerekce = f"{status} -- duvar: {', '.join(vectors)}. {reason}"
             if ss_res:
-                gerekce += (f"\nGEMINI → {ss_res.get('var_mi', '?')}: "
+                gerekce += (f"\nGEMINI -> {ss_res.get('var_mi', '?')}: "
                             f"{str(ss_res.get('gerekce', '') or ss_res.get('en_guclu_kanit', ''))[:600]}")
             competitors = [{"ad": r.get("ad", ""), "domain": r.get("domain", "")}
                            for r in ss_res.get("rakipler", [])]
-            for d in _domains_in(gap_reason):  # ilk-aşama tanığın işaret ettiği domain'ler
+            for d in _domains_in(gap_reason):
                 competitors.append({"ad": "", "domain": d})
             notion_write(db_id, pid, p, vectors, gap, paid, status, gerekce, competitors)
 
     save_seen(seen)
-    print(f"\n=== ÖZET: işlenen {processed} | PASS {counts['PASS']} | "
-          f"İNCELE {counts['İNCELE']} | DROP {counts['DROP']}")
+    print(f"\n=== OZET: islenen {processed} | PASS {counts.get('PASS',0)} | BELIRSIZ {counts.get('BELIRSIZ',0)} | DROP {counts.get('DROP',0)}")
 
     # KURAL: 0 survivor = motor hatası alarmı, piyasa kararı değil.
-    if processed >= 10 and counts["PASS"] == 0 and counts["İNCELE"] == 0:
+    if processed >= 10 and counts.get("PASS",0) == 0 and counts.get("BELIRSIZ",0) == 0:
         print("⚠ ALARM: 0 survivor. Gate'ler fazla katı / duvar tespiti kırık olabilir — "
               "MOTORU kontrol et, piyasayı suçlama.")
 
