@@ -1,0 +1,47 @@
+{
+  "ai-smarttalk": {
+    "var_mi": "VAR",
+    "bulunan": [
+      "CBOT cbot.ai",
+      "Dahi.ai dahi.ai",
+      "Supsis AI supsis.com",
+      "AI Agent TR aiagenttr.com"
+    ],
+    "yakalanan": [
+      "supsis"
+    ],
+    "kacan": [
+      "mavibot"
+    ],
+    "kanit": "CBOT (cbot.ai) ve Dahi.ai (dahi.ai) platformlarının sunduğu çok kanallı (omnichannel) ve kodsuz (no-code) yapay zeka asistanı oluşturma çözümleri ile AI Agent TR (aiagenttr.com) ve aiasistan.net gibi platformların KVKK uyumlu (privacy-first) yapay zeka chatbot altyapısı sunduğuna dair arama sonuçları.",
+    "gerekce": "Arama sonuçlarında yer alan CBOT, Dahi.ai, Supsis AI ve AI Agent TR gibi yerli girişimler; kod yazmadan (no-code) yapay zeka tabanlı asistanlar/ajanlar oluşturma, bunları WhatsApp, Instagram, Web gibi çoklu kanallarda (omnichannel) yayına alma ve KVKK uyumluluğu (privacy-first) sağlama işini doğrudan yapmaktadır."
+  },
+  "personeoai": {
+    "var_mi": "VAR",
+    "bulunan": [
+      "EVRE evre.ai",
+      "Minds getminds.ai"
+    ],
+    "yakalanan": [
+      "evre"
+    ],
+    "kacan": [
+      "enocta",
+      "synaps"
+    ],
+    "kanit": "https://evre.ai/tr",
+    "gerekce": "EVRE (evre.ai), ekiplerin zorlu müşteri görüşmelerini, kriz ve kaos senaryolarını yapay zeka karakterleriyle canlı sesli diyaloglar halinde simüle etmelerini sağlayan yapay zeka destekli bir role play ve kriz simülasyonu eğitim platformudur. Bu yönüyle personeo.ai ile tamamen aynı çekirdek işi yapmaktadır. Sitede hem 'Try It Free' hem de 'Request Demo' seçenekleri sunulduğu için self-servis modeli belirsizdir. Minds (getminds.ai) da benzer şekilde yapay zeka müşteri simülasyon platformu olarak ekiplerin iletişim ve ürün konumlandırma becerilerini test etmelerini sağlar."
+  },
+  "motionvid": {
+    "var_mi": "BELİRSİZ",
+    "bulunan": [
+      "Hera hera.video",
+      "TravelAnimator travelanimator.com",
+      "VideoSanat videosanat.com"
+    ],
+    "yakalanan": [],
+    "kacan": [],
+    "kanit": "[https://www.instagram.com/reel/DNdq6cyoprl/] adresindeki 'Sadece metin komutu ile hareketli tasarımlar yapmak... Örneğin ilk başta Türkiye'nin nüfusunu gösteren bir...' ifadesiyle Hera (hera.video) ürününün Türkçe tanıtımının yapılması.",
+    "gerekce": "Hera (hera.video) ürünü, Motionvid AI ile birebir aynı çekirdek işi (metin komutlarından yapay zeka destekli hareketli grafikler, infografikler ve açıklayıcı videolar üretme) self-servis olarak sunmaktadır ve Türkçe sosyal medya tanıtımları mevcuttur; ancak girişimin yerli/Türk bir oyuncu olup olmadığı sunulan malzemeden kesin olarak doğrulanamamaktadır. Diğer bir aday olan TravelAnimator sadece harita animasyonlarına odaklanmıştır. VideoSanat ise yerli bir oyuncu olmakla birlikte yapay zeka tabanlı bir self-servis yazılım değil, geleneksel bir tasarım ajansıdır."
+  }
+}

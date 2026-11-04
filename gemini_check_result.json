@@ -1,0 +1,19 @@
+{
+  "var_mi": "VAR",
+  "rakipler": [
+    {
+      "ad": "EVRE",
+      "domain": "evre.ai",
+      "ayni_cekirdek_is": true,
+      "self_servis_mi": "hayir"
+    },
+    {
+      "ad": "Synaps AI",
+      "domain": "synapsai.ai",
+      "ayni_cekirdek_is": true,
+      "self_servis_mi": "hayir"
+    }
+  ],
+  "en_guclu_kanit": "evre.ai web sitesinde yer alan 'Şirkete özel kriz, zor müşteri ve kaos senaryolarını yapay zeka destekli role play simülasyonlarıyla çalışın. Gerçek zamanlı sesli diyalog, gerçek zamanlı puanlama ve davranışsal analiz...' ifadesi ve synapsai.ai sitesindeki 'AI Role Play — Satış, servis ve yönetici rollerine özel simülasyon mülakatları' ifadesidir.",
+  "gerekce": "Türkiye'de personeo.ai ile tamamen aynı çekirdek işi yapan (sesli yapay zeka ile iş hayatı senaryoları, zor müşteri, kriz yönetimi ve mülakat simülasyonları üzerinden roleplay yaptırma ve performans puanı verme) yerli girişimler bulunmaktadır. EVRE ve Synaps AI bu alandaki en net yerli örneklerdir ve her ikisi de kurumsal satış (B2B) odaklı çalışmaktadır."
+}

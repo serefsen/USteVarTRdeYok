@@ -1,0 +1,141 @@
+{
+  "runs": 3,
+  "results": {
+    "charla": {
+      "human": "DROP",
+      "runs": [
+        "İNCELE",
+        "İNCELE",
+        "İNCELE"
+      ]
+    },
+    "unmixr-ai": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "tiny-talk": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "İNCELE",
+        "İNCELE"
+      ]
+    },
+    "ai-smarttalk": {
+      "human": "DROP",
+      "runs": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    "xinterview": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "personeoai": {
+      "human": "DROP",
+      "runs": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    "spellar-ai": {
+      "human": "PASS",
+      "runs": [
+        "PASS",
+        "DROP",
+        "PASS"
+      ]
+    },
+    "hedy-ai": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "motionvid": {
+      "human": "DROP",
+      "runs": [
+        "PASS",
+        "PASS",
+        "PASS"
+      ]
+    },
+    "topical-map-ai": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "airbrush-ai-image-generator": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "writingmate": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "webabilityio": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "release0": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "ai-context-flow": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    },
+    "sheetgpt-chatgpt-google-sheets-integration": {
+      "human": "DROP",
+      "runs": [
+        "DROP",
+        "DROP",
+        "DROP"
+      ]
+    }
+  },
+  "summary": {
+    "n": 16,
+    "correct": 11,
+    "false_pass": 3,
+    "false_drop": 0,
+    "punt": 2,
+    "inconsistent": 2
+  }
+}
